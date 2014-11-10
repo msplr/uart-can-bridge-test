@@ -9,7 +9,7 @@
 #include "sensors/onboardsensors.h"
 #include "sensors/ms5611.h"
 #include "serial-datagram/serial_datagram.h"
-#include "cmp/cmp.h"
+#include "cmp.h"
 
 SerialUSBDriver SDU1;
 
