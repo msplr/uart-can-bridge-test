@@ -10,3 +10,6 @@
 [submodule "src/serial-datagram"]
 	path = serial-datagram
 	url = git@github.com:Stapelzeiger/serial-datagram.git
+[submodule "serial-can-bridge"]
+	path = serial-can-bridge
+	url = https://github.com/nuft/serial-can-bridge.git
