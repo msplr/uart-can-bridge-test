@@ -5,8 +5,8 @@
 	path = src/cmp
 	url = git@github.com:camgunz/cmp.git
 [submodule "src/crc"]
-	path = src/crc
+	path = crc
 	url = git@github.com:nuft/CRC.git
 [submodule "src/serial-datagram"]
-	path = src/serial-datagram
+	path = serial-datagram
 	url = git@github.com:Stapelzeiger/serial-datagram.git
