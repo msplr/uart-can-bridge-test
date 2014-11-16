@@ -96,8 +96,7 @@ static void cmd_bridge(BaseSequentialStream *chp, int argc, char *argv[])
 {
     (void) argc;
     (void) argv;
-
-    chprintf(chp, "bridge\r\n");
+    (void) chp;
 
     run_bridge();
     while(1) {
@@ -105,17 +104,20 @@ static void cmd_bridge(BaseSequentialStream *chp, int argc, char *argv[])
     }
 }
 
-void debug(const char *s)
+void debug(const char *fmt, ...)
 {
+    va_list ap;
+    va_start(ap, fmt);
     BaseSequentialStream *chp = (BaseSequentialStream *)&SDU1;
-    chprintf(chp, "%s", s);
+    chvprintf(chp, fmt, ap);
+    va_end(ap);
 }
 
 static const ShellCommand commands[] = {
-  {"mem", cmd_mem},
-  {"threads", cmd_threads},
-  {"bridge", cmd_bridge},
-  {NULL, NULL}
+    {"mem", cmd_mem},
+    {"threads", cmd_threads},
+    {"bridge", cmd_bridge},
+    {NULL, NULL}
 };
 
 static const ShellConfig shell_cfg1 = {
