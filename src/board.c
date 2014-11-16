@@ -131,10 +131,13 @@ void board_sdcard_pwr_en(bool en)
 }
 
 
-void board_can_standby(bool en)
+void board_can_standby(bool standby)
 {
-    (void)en;
-// GPIOC_CAN_CONN_EN // high = standby
+    if (standby) {
+        palSetPad(GPIOC, GPIOC_CAN_CONN_EN);
+    } else {
+        palClearPad(GPIOC, GPIOC_CAN_CONN_EN);
+    }
 }
 
 
