@@ -11,57 +11,20 @@
 
 extern void debug(const char *fmt, ...);
 
-void mock_master_sd_rcv_cb(const void *send_data, size_t send_len)
+void serial_send_to_master_mock(const uint8_t *data, size_t len)
 {
-    bool ext;
-    uint32_t id;
-    uint8_t data[8];
-    uint8_t len;
-
+    struct can_bridge_frame frame;
     serializer_t ser;
     cmp_ctx_t ctx;
-    serializer_init(&ser, (char *)send_data, send_len);
+    serializer_init(&ser, (char *)data, len);
     serializer_cmp_ctx_factory(&ctx, &ser);
-    if (!can_frame_cmp_read(&ctx, &ext, &id, data, &len)) {
+    if (!can_frame_cmp_read(&ctx, &frame)) {
         debug("can_frame_cmp_read error\n");
     }
 
-    debug("can rcv: ext %u, id %x, len %u, \"", ext, id, len);
-    int i;
-    for (i = 0; i < len; i++) {
-        debug("%c", data[i]);
-    }
-    debug("\"\n");
-}
-
-static bool first = true;
-void mock_master_receiver(const void *data, size_t len)
-{
-    static serial_datagram_rcv_handler_t rcv;
-    static uint8_t mock_serial_write_buf[32];
-
-    if (first) {
-        first = false;
-        serial_datagram_rcv_handler_init(
-            &rcv,
-            mock_serial_write_buf,
-            sizeof(mock_serial_write_buf),
-            mock_master_sd_rcv_cb);
-    }
-
-    if (serial_datagram_receive(&rcv, data, len) != SERIAL_DATAGRAM_RCV_NO_ERROR) {
-        debug("serial_datagram_receive error\n");
-    }
-}
-
-void serial_interface_write(void *arg, const void *data, size_t len)
-{
-    (void)arg;
-    if (len > 0) {
-        // // chSequentialStreamWrite((BaseSequentialStream*)arg, (const uint8_t*)data, len);
-        // sdWrite((SerialDriver *)arg, data, len);
-        mock_master_receiver(data, len);
-    }
+    debug("can rcv: ext %u, id %x, len %u, %08x, %08x\n", frame.ext,
+            frame.ext ? frame.id.ext : frame.id.std, frame.dlc,
+            frame.data.u32[0], frame.data.u32[1]);
 }
 
 size_t mock_write_count;
@@ -76,8 +39,10 @@ void mock_write(void *arg, const void *data, size_t len)
     }
 }
 
-size_t serial_master_mock(void *buf)
+size_t serial_receive_from_master_mock(void *buf)
 {
+    static uint8_t id = 0;
+    id++;
     static char frame_buf[32];
     chThdSleepMilliseconds(500);
     serializer_t ser;
@@ -85,7 +50,10 @@ size_t serial_master_mock(void *buf)
     serializer_init(&ser, frame_buf, sizeof(frame_buf));
     serializer_cmp_ctx_factory(&ctx, &ser);
     cmp_write_uint(&ctx, 0);
-    bool w = can_frame_cmp_write(&ctx, false, 42, "hi world", 8);
+    struct can_bridge_frame frame = {
+        .ext = 0, .rtr = 0, .id.std = id, .data.u8 = {'x','k','c','d'}, .dlc = 4
+    };
+    bool w = can_frame_cmp_write(&ctx, &frame);
     if (!w) {
         debug("can frame write err\n");
     }
@@ -98,17 +66,7 @@ size_t serial_master_mock(void *buf)
     return mock_write_count;
 }
 
-size_t serial_interface_read(void *arg, void *buf, size_t max)
-{
-    (void)arg;
-    return serial_master_mock(buf);
-
-    // // return chSequentialStreamRead((BaseSequentialStream*)arg, buf, max);
-
-    // return sdReadTimeout((SerialDriver *)arg, buf, max, 10);
-}
-
-void can_interface_send(bool ext, uint32_t id, void *data, uint8_t len)
+void can_interface_send(bool ext, bool rtr, uint32_t id, void *data, uint8_t len)
 {
     canmbx_t mailbox = 0;
     systime_t timeout = TIME_INFINITE;
@@ -116,7 +74,12 @@ void can_interface_send(bool ext, uint32_t id, void *data, uint8_t len)
     CANTxFrame ctf;
 
     ctf.DLC = len;
-    ctf.RTR = 0;
+
+    if (rtr) {
+        ctf.RTR = 1;
+    } else {
+        ctf.RTR = 0;
+    }
 
     if (ext) {
         ctf.IDE = 1;
@@ -131,7 +94,7 @@ void can_interface_send(bool ext, uint32_t id, void *data, uint8_t len)
     canTransmit(&CAND2, mailbox, &ctf, timeout);
 }
 
-void can_interface_receive(bool *ext, uint32_t *id, void *data, uint8_t *len)
+void can_interface_receive(struct can_bridge_frame *frame)
 {
     CANRxFrame crf;
     canmbx_t mailbox = 0;
@@ -139,45 +102,88 @@ void can_interface_receive(bool *ext, uint32_t *id, void *data, uint8_t *len)
 
     canReceive(&CAND2, mailbox, &crf, timeout);
 
-    // extended frame
+    frame->rtr = crf.RTR;
+    frame->ext = crf.IDE;
+    frame->dlc = crf.DLC;
+
     if (crf.IDE == 1) {
-        *ext = true;
+        frame->id.ext = crf.EID;
     } else {
-        *ext = false;
+        frame->id.std = crf.SID;
     }
 
-    // id
-    if (crf.IDE == 1) {
-        *id = crf.SID;
-    } else {
-        *id = crf.EID;
-    }
-
-    // data
-    memcpy(data, crf.data8, crf.DLC);
-
-    // length
-    *len = crf.DLC;
-
+    frame->data.u32[0] = crf.data32[0];
+    frame->data.u32[1] = crf.data32[1];
 }
 
 static THD_WORKING_AREA(bridge_rx_wa, 512);
 static THD_FUNCTION(bridge_rx, arg)
 {
-    serial_rx_main(arg);
+    static char datagram_buf[32];
+    static char serial_buf[42];
+    serial_datagram_rcv_handler_t rcv;
+
+    SerialDriver *sd = (SerialDriver *)arg;
+
+    serial_datagram_rcv_handler_init(
+        &rcv,
+        datagram_buf,
+        sizeof(datagram_buf),
+        can_bridge_datagram_rcv_cb);
+
+    while (1) {
+        int err;
+        size_t len;
+
+        // len = chSequentialStreamRead((BaseSequentialStream*)arg, buf, max);
+        // len = sdReadTimeout(sd, serial_buf, sizeof(serial_buf), 10);
+        (void)sd;
+        len = serial_receive_from_master_mock(serial_buf);
+
+        err = serial_datagram_receive(&rcv, serial_buf, len);
+
+        if (err != SERIAL_DATAGRAM_RCV_NO_ERROR) {
+            debug("serial datagram error: %d", err);
+        }
+    }
     return 0;
+}
+
+void serial_write(void *arg, const void *p, size_t len)
+{
+    SerialDriver *sd = (SerialDriver *)arg;
+    // chSequentialStreamWrite((BaseSequentialStream*)arg, (const uint8_t*)data, len);
+    sdWrite(sd, p, len);
 }
 
 static THD_WORKING_AREA(bridge_tx_wa, 512);
 static THD_FUNCTION(bridge_tx, arg)
 {
-    serial_tx_main(arg);
+
+    struct can_bridge_frame frame;
+
+    static uint8_t outbuf[32];
+    size_t outlen;
+
+    while (1) {
+        can_interface_receive(&frame);
+
+        outlen = sizeof(outbuf);
+        if (can_bridge_frame_write(&frame, outbuf, &outlen)) {
+            // serial_datagram_send(outbuf, outlen, serial_write, arg);
+
+            (void)arg;
+            serial_send_to_master_mock(outbuf, outlen);
+        } else {
+            debug("failed to encode received CAN frame\n");
+        }
+    }
+
     return 0;
 }
 
 static const CANConfig can1_config = {
     .mcr = (1 << 6) | (1 << 2),
-
     // loopback, silent
     .btr = (1 << 0) | (11 << 16) | (7 << 20) | (0 << 24)  | (1 << 30) | (1 << 31)
 };
