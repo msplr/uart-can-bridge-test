@@ -106,11 +106,13 @@ static void cmd_bridge(BaseSequentialStream *chp, int argc, char *argv[])
 
 void debug(const char *fmt, ...)
 {
-    va_list ap;
-    va_start(ap, fmt);
-    BaseSequentialStream *chp = (BaseSequentialStream *)&SDU1;
-    chvprintf(chp, fmt, ap);
-    va_end(ap);
+    (void) fmt;
+    return;
+    // va_list ap;
+    // va_start(ap, fmt);
+    // BaseSequentialStream *chp = (BaseSequentialStream *)&SDU1;
+    // chvprintf(chp, fmt, ap);
+    // va_end(ap);
 }
 
 static const ShellCommand commands[] = {
@@ -132,13 +134,18 @@ int main(void)
 
     chThdCreateStatic(led_task_wa, sizeof(led_task_wa), LOWPRIO, led_task, NULL);
 
-    sduObjectInit(&SDU1);
-    sduStart(&SDU1, &serusbcfg);
+    // sduObjectInit(&SDU1);
+    // sduStart(&SDU1, &serusbcfg);
 
-    usbDisconnectBus(serusbcfg.usbp);
-    chThdSleepMilliseconds(1000);
-    usbStart(serusbcfg.usbp, &usbcfg);
-    usbConnectBus(serusbcfg.usbp);
+    // usbDisconnectBus(serusbcfg.usbp);
+    // chThdSleepMilliseconds(1000);
+    // usbStart(serusbcfg.usbp, &usbcfg);
+    // usbConnectBus(serusbcfg.usbp);
+
+    run_bridge();
+    while(1) {
+        chThdSleepMilliseconds(100);
+    }
 
     shellInit();
     thread_t *shelltp = NULL;

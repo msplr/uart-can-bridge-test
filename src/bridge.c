@@ -135,15 +135,14 @@ static THD_FUNCTION(bridge_rx, arg)
         int err;
         size_t len;
 
-        // len = chSequentialStreamRead((BaseSequentialStream*)arg, buf, max);
-        // len = sdReadTimeout(sd, serial_buf, sizeof(serial_buf), 10);
-        (void)sd;
-        len = serial_receive_from_master_mock(serial_buf);
+        len = sdReadTimeout(sd, (uint8_t *) serial_buf, sizeof(serial_buf), 10);
 
-        err = serial_datagram_receive(&rcv, serial_buf, len);
+        if (len > 0) {
+            err = serial_datagram_receive(&rcv, serial_buf, len);
 
-        if (err != SERIAL_DATAGRAM_RCV_NO_ERROR) {
-            debug("serial datagram error: %d", err);
+            if (err != SERIAL_DATAGRAM_RCV_NO_ERROR) {
+                debug("serial datagram error: %d", err);
+            }
         }
     }
     return 0;
@@ -153,7 +152,9 @@ void serial_write(void *arg, const void *p, size_t len)
 {
     SerialDriver *sd = (SerialDriver *)arg;
     // chSequentialStreamWrite((BaseSequentialStream*)arg, (const uint8_t*)data, len);
-    sdWrite(sd, p, len);
+    if (len != 0) {
+        sdWrite(sd, p, len);
+    }
 }
 
 static THD_WORKING_AREA(bridge_tx_wa, 512);
@@ -170,10 +171,7 @@ static THD_FUNCTION(bridge_tx, arg)
 
         outlen = sizeof(outbuf);
         if (can_bridge_frame_write(&frame, outbuf, &outlen)) {
-            // serial_datagram_send(outbuf, outlen, serial_write, arg);
-
-            (void)arg;
-            serial_send_to_master_mock(outbuf, outlen);
+            serial_datagram_send(outbuf, outlen, serial_write, arg);
         } else {
             debug("failed to encode received CAN frame\n");
         }
@@ -195,6 +193,7 @@ static const CANConfig can2_config = {
 
 void run_bridge(void)
 {
+    debug("bridge\n");
     BaseSequentialStream *serial = (BaseSequentialStream *) &UART_CONN2;
     sdStart(&UART_CONN2, NULL);
 
@@ -202,6 +201,8 @@ void run_bridge(void)
     canStart(&CAND2, &can2_config);
 
     board_can_standby(false);
+
+    debug("can initialized\n");
 
     chThdCreateStatic(bridge_rx_wa, sizeof(bridge_rx_wa), NORMALPRIO, bridge_rx, serial);
     chThdCreateStatic(bridge_tx_wa, sizeof(bridge_tx_wa), NORMALPRIO, bridge_tx, serial);
